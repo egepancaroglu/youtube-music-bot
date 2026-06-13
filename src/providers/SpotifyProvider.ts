@@ -102,25 +102,33 @@ export class SpotifyProvider implements MusicProvider {
     tracks: SpotifyTrackData[],
     requestedBy: string,
   ): Promise<Track[]> {
+    const CONCURRENCY = 5;
     const results: Track[] = [];
 
-    for (const track of tracks) {
-      const artist = track.artists.map((a) => a.name).join(', ');
-      const searchQuery = `${artist} - ${track.name}`;
-
-      try {
-        const found = await this.youtube.search(searchQuery, requestedBy, 1);
-        if (found.length > 0) {
-          results.push({
+    for (let i = 0; i < tracks.length; i += CONCURRENCY) {
+      const batch = tracks.slice(i, i + CONCURRENCY);
+      const settled = await Promise.allSettled(
+        batch.map(async (track) => {
+          const artist = track.artists.map((a) => a.name).join(', ');
+          const searchQuery = `${artist} - ${track.name}`;
+          const found = await this.youtube.search(searchQuery, requestedBy, 1);
+          if (found.length === 0) return null;
+          return {
             ...found[0],
             title: track.name,
             artist,
             thumbnail: track.album?.images?.[0]?.url ?? found[0].thumbnail,
-            provider: 'spotify',
-          });
+            provider: 'spotify' as const,
+          };
+        }),
+      );
+
+      for (const result of settled) {
+        if (result.status === 'fulfilled' && result.value) {
+          results.push(result.value);
+        } else if (result.status === 'rejected') {
+          logger.warn(`Spotify track search failed: ${result.reason}`);
         }
-      } catch {
-        logger.warn(`Could not find YouTube match for: ${searchQuery}`);
       }
     }
 
