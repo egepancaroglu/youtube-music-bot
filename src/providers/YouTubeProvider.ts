@@ -1,10 +1,7 @@
-import ytdl from '@distube/ytdl-core';
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const YouTube = require('youtube-sr').default ?? require('youtube-sr');
 const ytDlpConstants = require('yt-dlp-exec/src/constants');
 const ytDlpPath: string =
   ytDlpConstants.YOUTUBE_DL_PATH ??
@@ -15,15 +12,7 @@ import { detectInputType, normalizeYouTubeUrl } from '../utils/url.js';
 import { ProviderError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
-interface YTVideo {
-  id?: string;
-  title?: string;
-  channel?: { name?: string };
-  duration?: number;
-  thumbnail?: { url?: string };
-}
-
-interface YtDlpPlaylistEntry {
+interface YtDlpEntry {
   id: string;
   title: string;
   channel?: string;
@@ -31,6 +20,9 @@ interface YtDlpPlaylistEntry {
   duration?: number;
   thumbnail?: string;
   thumbnails?: { url: string }[];
+  webpage_url?: string;
+  original_url?: string;
+  url?: string;
 }
 
 export class YouTubeProvider implements MusicProvider {
@@ -57,8 +49,18 @@ export class YouTubeProvider implements MusicProvider {
 
   async search(query: string, requestedBy: string, limit = 5): Promise<Track[]> {
     try {
-      const results: YTVideo[] = await YouTube.search(query, { type: 'video', limit });
-      return results.map((video) => this.videoToTrack(video, requestedBy));
+      const output = await this.exec([
+        `ytsearch${limit}:${query}`,
+        '--flat-playlist', '--dump-json', '--no-warnings', '-q',
+      ]);
+
+      const entries = output
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as YtDlpEntry);
+
+      return entries.map((entry) => this.entryToTrack(entry, requestedBy));
     } catch (error) {
       logger.error('YouTube search failed', error);
       throw new ProviderError('YouTube', 'Search failed. Please try again.');
@@ -68,19 +70,12 @@ export class YouTubeProvider implements MusicProvider {
   private async resolveVideo(url: string, requestedBy: string): Promise<Track[]> {
     try {
       url = normalizeYouTubeUrl(url);
-      const info = await ytdl.getBasicInfo(url);
-      const details = info.videoDetails;
-      return [
-        {
-          title: details.title,
-          artist: details.author.name,
-          url: details.video_url,
-          duration: parseInt(details.lengthSeconds, 10),
-          thumbnail: details.thumbnails?.[0]?.url ?? '',
-          requestedBy,
-          provider: 'youtube',
-        },
-      ];
+      const output = await this.exec([
+        url, '--dump-json', '--no-playlist', '--no-warnings', '-q',
+      ]);
+
+      const entry = JSON.parse(output.trim()) as YtDlpEntry;
+      return [this.entryToTrack(entry, requestedBy)];
     } catch (error) {
       logger.error('YouTube video resolve failed', error);
       throw new ProviderError('YouTube', 'Could not load that video.');
@@ -89,47 +84,45 @@ export class YouTubeProvider implements MusicProvider {
 
   private async resolvePlaylist(url: string, requestedBy: string): Promise<Track[]> {
     try {
-      const output = await new Promise<string>((resolve, reject) => {
-        execFile(
-          ytDlpPath,
-          ['--flat-playlist', '--dump-json', '--no-warnings', '-q', url],
-          { maxBuffer: 50 * 1024 * 1024, timeout: 30_000 },
-          (err, stdout) => (err ? reject(err) : resolve(stdout)),
-        );
-      });
+      const output = await this.exec([
+        url, '--flat-playlist', '--dump-json', '--no-warnings', '-q',
+      ]);
 
       const entries = output
         .trim()
         .split('\n')
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as YtDlpPlaylistEntry);
+        .map((line) => JSON.parse(line) as YtDlpEntry);
 
       if (entries.length === 0) throw new Error('Empty playlist');
 
-      return entries.map((entry) => ({
-        title: entry.title ?? 'Unknown Title',
-        artist: entry.channel ?? entry.uploader ?? 'Unknown Artist',
-        url: `https://www.youtube.com/watch?v=${entry.id}`,
-        duration: entry.duration ?? 0,
-        thumbnail: entry.thumbnail ?? entry.thumbnails?.[0]?.url ?? '',
-        requestedBy,
-        provider: 'youtube' as const,
-      }));
+      return entries.map((entry) => this.entryToTrack(entry, requestedBy));
     } catch (error) {
       logger.error('YouTube playlist resolve failed', error);
       throw new ProviderError('YouTube', 'Could not load that playlist.');
     }
   }
 
-  private videoToTrack(video: YTVideo, requestedBy: string): Track {
+  private entryToTrack(entry: YtDlpEntry, requestedBy: string): Track {
     return {
-      title: video.title ?? 'Unknown Title',
-      artist: video.channel?.name ?? 'Unknown Artist',
-      url: `https://www.youtube.com/watch?v=${video.id}`,
-      duration: Math.floor((video.duration ?? 0) / 1000),
-      thumbnail: video.thumbnail?.url ?? '',
+      title: entry.title ?? 'Unknown Title',
+      artist: entry.channel ?? entry.uploader ?? 'Unknown Artist',
+      url: entry.webpage_url ?? entry.original_url ?? `https://www.youtube.com/watch?v=${entry.id}`,
+      duration: entry.duration ?? 0,
+      thumbnail: entry.thumbnail ?? entry.thumbnails?.[0]?.url ?? '',
       requestedBy,
       provider: 'youtube',
     };
+  }
+
+  private exec(args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile(
+        ytDlpPath,
+        args,
+        { maxBuffer: 50 * 1024 * 1024, timeout: 30_000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      );
+    });
   }
 }
