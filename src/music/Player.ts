@@ -45,34 +45,48 @@ export class Player {
   async play(track: Track): Promise<void> {
     this.killProcesses();
 
-    const ytdlp = spawn(
-      ytDlpPath,
-      [track.url, '-f', 'bestaudio[ext=webm]/bestaudio/best', '-o', '-', '--no-playlist', '--no-warnings', '-q'],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    let ffmpegInput: string[];
+
+    if (track.streamUrl) {
+      ffmpegInput = ['-i', track.streamUrl, '-analyzeduration', '0', '-loglevel', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'];
+      logger.info('Using prefetched stream URL');
+    } else {
+      ffmpegInput = ['-i', 'pipe:0', '-analyzeduration', '0', '-loglevel', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'];
+    }
 
     const ffmpegProc = spawn(
       ffmpeg,
-      ['-i', 'pipe:0', '-analyzeduration', '0', '-loglevel', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'],
-      { stdio: ['pipe', 'pipe', 'ignore'] },
+      ffmpegInput,
+      { stdio: [track.streamUrl ? 'ignore' : 'pipe', 'pipe', 'ignore'] },
     );
 
-    this.processes = [ytdlp, ffmpegProc];
-
-    ytdlp.stderr?.on('data', (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (msg) logger.debug(`yt-dlp: ${msg}`);
-    });
-
-    ytdlp.stdout.on('error', noop);
-    ffmpegProc.stdin.on('error', noop);
-    ffmpegProc.stdout.on('error', noop);
-    ytdlp.on('error', noop);
+    ffmpegProc.stdout!.on('error', noop);
     ffmpegProc.on('error', noop);
 
-    ytdlp.stdout.pipe(ffmpegProc.stdin);
+    if (!track.streamUrl) {
+      const ytdlp = spawn(
+        ytDlpPath,
+        [track.url, '-f', 'bestaudio[ext=webm]/bestaudio/best', '-o', '-', '--no-playlist', '--no-warnings', '-q'],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      );
 
-    this.resource = createAudioResource(ffmpegProc.stdout, {
+      this.processes = [ytdlp, ffmpegProc];
+
+      ytdlp.stderr?.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg) logger.debug(`yt-dlp: ${msg}`);
+      });
+
+      ytdlp.stdout.on('error', noop);
+      ffmpegProc.stdin!.on('error', noop);
+      ytdlp.on('error', noop);
+
+      ytdlp.stdout.pipe(ffmpegProc.stdin!);
+    } else {
+      this.processes = [ffmpegProc];
+    }
+
+    this.resource = createAudioResource(ffmpegProc.stdout!, {
       inputType: StreamType.Raw,
       inlineVolume: true,
     });

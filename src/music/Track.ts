@@ -7,4 +7,5 @@ export interface Track {
   requestedBy: string;
   provider: 'youtube' | 'spotify';
   searchQuery?: string;
+  streamUrl?: string;
 }

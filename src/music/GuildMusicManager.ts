@@ -10,10 +10,19 @@ import { EmbedBuilder } from 'discord.js';
 import { Queue } from './Queue.js';
 import { Player } from './Player.js';
 import type { Track } from './Track.js';
+import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { YouTubeProvider } from '../providers/YouTubeProvider.js';
 import { config } from '../config.js';
 import { formatDuration } from '../utils/duration.js';
 import { logger } from '../utils/logger.js';
+
+const require = createRequire(import.meta.url);
+const ytDlpConstants = require('yt-dlp-exec/src/constants');
+const ytDlpPath: string =
+  ytDlpConstants.YOUTUBE_DL_PATH ??
+  path.join(require.resolve('yt-dlp-exec'), '..', 'bin', 'yt-dlp.exe');
 
 const youtube = new YouTubeProvider();
 
@@ -128,16 +137,36 @@ export class GuildMusicManager {
 
   private prefetchNext(): void {
     const next = this.queue.peek();
-    if (next && next.searchQuery && !next.url) {
-      logger.info(`Prefetching next: ${next.searchQuery}`);
-      youtube.search(next.searchQuery, next.requestedBy, 1).then((results) => {
-        if (results.length > 0) {
-          next.url = results[0].url;
-          next.searchQuery = undefined;
-          logger.info(`Prefetched: ${next.title}`);
-        }
-      }).catch(() => {});
-    }
+    if (!next || next.streamUrl) return;
+
+    const resolveAndGetStream = async () => {
+      if (next.searchQuery && !next.url) {
+        logger.info(`Prefetch resolving: ${next.searchQuery}`);
+        const results = await youtube.search(next.searchQuery, next.requestedBy, 1);
+        if (results.length === 0) return;
+        next.url = results[0].url;
+        next.searchQuery = undefined;
+      }
+
+      logger.info(`Prefetch stream URL: ${next.title}`);
+      const streamUrl = await new Promise<string>((resolve, reject) => {
+        execFile(
+          ytDlpPath,
+          [next.url, '-f', 'bestaudio[ext=webm]/bestaudio/best', '-g', '--no-playlist', '--no-warnings', '-q'],
+          { timeout: 15_000 },
+          (err, stdout) => (err ? reject(err) : resolve(stdout.trim())),
+        );
+      });
+
+      if (streamUrl) {
+        next.streamUrl = streamUrl;
+        logger.info(`Prefetched ready: ${next.title}`);
+      }
+    };
+
+    resolveAndGetStream().catch((err) => {
+      logger.warn(`Prefetch failed for ${next.title}: ${err.message}`);
+    });
   }
 
   private async resolveIfNeeded(track: Track): Promise<Track> {
