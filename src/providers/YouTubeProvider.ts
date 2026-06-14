@@ -12,18 +12,7 @@ import { detectInputType, normalizeYouTubeUrl } from '../utils/url.js';
 import { ProviderError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
-interface YtDlpEntry {
-  id: string;
-  title: string;
-  channel?: string;
-  uploader?: string;
-  duration?: number;
-  thumbnail?: string;
-  thumbnails?: { url: string }[];
-  webpage_url?: string;
-  original_url?: string;
-  url?: string;
-}
+const PRINT_FIELDS = '%(id)s\t%(title)s\t%(channel)s\t%(duration)s\t%(thumbnail)s';
 
 export class YouTubeProvider implements MusicProvider {
   readonly name = 'youtube';
@@ -51,16 +40,11 @@ export class YouTubeProvider implements MusicProvider {
     try {
       const output = await this.exec([
         `ytsearch${limit}:${query}`,
-        '--flat-playlist', '--dump-json', '--no-warnings', '-q',
+        '--flat-playlist', '--print', PRINT_FIELDS,
+        '--no-warnings', '-q',
       ]);
 
-      const entries = output
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as YtDlpEntry);
-
-      return entries.map((entry) => this.entryToTrack(entry, requestedBy));
+      return this.parseLines(output, requestedBy);
     } catch (error) {
       logger.error('YouTube search failed', error);
       throw new ProviderError('YouTube', 'Search failed. Please try again.');
@@ -71,11 +55,11 @@ export class YouTubeProvider implements MusicProvider {
     try {
       url = normalizeYouTubeUrl(url);
       const output = await this.exec([
-        url, '--dump-json', '--no-playlist', '--no-warnings', '-q',
+        url, '--no-playlist', '--print', PRINT_FIELDS,
+        '--no-warnings', '-q',
       ]);
 
-      const entry = JSON.parse(output.trim()) as YtDlpEntry;
-      return [this.entryToTrack(entry, requestedBy)];
+      return this.parseLines(output, requestedBy);
     } catch (error) {
       logger.error('YouTube video resolve failed', error);
       throw new ProviderError('YouTube', 'Could not load that video.');
@@ -85,34 +69,36 @@ export class YouTubeProvider implements MusicProvider {
   private async resolvePlaylist(url: string, requestedBy: string): Promise<Track[]> {
     try {
       const output = await this.exec([
-        url, '--flat-playlist', '--dump-json', '--no-warnings', '-q',
+        url, '--flat-playlist', '--print', PRINT_FIELDS,
+        '--no-warnings', '-q',
       ]);
 
-      const entries = output
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as YtDlpEntry);
-
-      if (entries.length === 0) throw new Error('Empty playlist');
-
-      return entries.map((entry) => this.entryToTrack(entry, requestedBy));
+      const tracks = this.parseLines(output, requestedBy);
+      if (tracks.length === 0) throw new Error('Empty playlist');
+      return tracks;
     } catch (error) {
       logger.error('YouTube playlist resolve failed', error);
       throw new ProviderError('YouTube', 'Could not load that playlist.');
     }
   }
 
-  private entryToTrack(entry: YtDlpEntry, requestedBy: string): Track {
-    return {
-      title: entry.title ?? 'Unknown Title',
-      artist: entry.channel ?? entry.uploader ?? 'Unknown Artist',
-      url: entry.webpage_url ?? entry.original_url ?? `https://www.youtube.com/watch?v=${entry.id}`,
-      duration: entry.duration ?? 0,
-      thumbnail: entry.thumbnail ?? entry.thumbnails?.[0]?.url ?? '',
-      requestedBy,
-      provider: 'youtube',
-    };
+  private parseLines(output: string, requestedBy: string): Track[] {
+    return output
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [id, title, channel, duration, thumbnail] = line.split('\t');
+        return {
+          title: title && title !== 'NA' ? title : 'Unknown Title',
+          artist: channel && channel !== 'NA' ? channel : 'Unknown Artist',
+          url: `https://www.youtube.com/watch?v=${id}`,
+          duration: parseInt(duration, 10) || 0,
+          thumbnail: thumbnail && thumbnail !== 'NA' ? thumbnail : '',
+          requestedBy,
+          provider: 'youtube' as const,
+        };
+      });
   }
 
   private exec(args: string[]): Promise<string> {
