@@ -5,6 +5,7 @@ import {
   type ChatInputCommandInteraction,
   type SharedSlashCommand,
 } from 'discord.js';
+import { config } from './config.js';
 import { BotError } from './utils/errors.js';
 import { logger } from './utils/logger.js';
 
@@ -51,6 +52,11 @@ client.once('ready', (c) => {
 client.on('interactionCreate', async (interaction) => {
   logger.info(`Interaction received: ${interaction.type} / ${interaction.id}`);
   if (!interaction.isChatInputCommand()) return;
+
+  if (config.allowedChannelId && interaction.channelId !== config.allowedChannelId) {
+    await interaction.reply({ content: 'Bu komutu sadece <#' + config.allowedChannelId + '> kanalında kullanabilirsin.', ephemeral: true });
+    return;
+  }
 
   logger.info(`Command: /${interaction.commandName}`);
   const command = commands.get(interaction.commandName);

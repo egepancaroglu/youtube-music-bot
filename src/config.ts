@@ -21,5 +21,6 @@ export const config = {
       return Boolean(this.clientId && this.clientSecret);
     },
   },
+  allowedChannelId: process.env.ALLOWED_CHANNEL_ID ?? '',
   defaultVolume: Math.min(100, Math.max(0, Number(process.env.DEFAULT_VOLUME) || 50)),
 };
