@@ -8,10 +8,12 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
 RUN npx tsc
+
+RUN npm prune --omit=dev
 
 CMD ["node", "dist/index.js"]
