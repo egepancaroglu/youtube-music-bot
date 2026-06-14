@@ -123,6 +123,21 @@ export class GuildMusicManager {
     track = await this.resolveIfNeeded(track);
     this.currentTrack = track;
     await this.player.play(track);
+    this.prefetchNext();
+  }
+
+  private prefetchNext(): void {
+    const next = this.queue.peek();
+    if (next && next.searchQuery && !next.url) {
+      logger.info(`Prefetching next: ${next.searchQuery}`);
+      youtube.search(next.searchQuery, next.requestedBy, 1).then((results) => {
+        if (results.length > 0) {
+          next.url = results[0].url;
+          next.searchQuery = undefined;
+          logger.info(`Prefetched: ${next.title}`);
+        }
+      }).catch(() => {});
+    }
   }
 
   private async resolveIfNeeded(track: Track): Promise<Track> {
