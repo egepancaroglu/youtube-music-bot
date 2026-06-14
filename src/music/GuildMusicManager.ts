@@ -10,9 +10,12 @@ import { EmbedBuilder } from 'discord.js';
 import { Queue } from './Queue.js';
 import { Player } from './Player.js';
 import type { Track } from './Track.js';
+import { YouTubeProvider } from '../providers/YouTubeProvider.js';
 import { config } from '../config.js';
 import { formatDuration } from '../utils/duration.js';
 import { logger } from '../utils/logger.js';
+
+const youtube = new YouTubeProvider();
 
 const managers = new Map<string, GuildMusicManager>();
 
@@ -117,8 +120,23 @@ export class GuildMusicManager {
   }
 
   async playTrack(track: Track): Promise<void> {
+    track = await this.resolveIfNeeded(track);
     this.currentTrack = track;
     await this.player.play(track);
+  }
+
+  private async resolveIfNeeded(track: Track): Promise<Track> {
+    if (track.searchQuery && !track.url) {
+      logger.info(`Resolving Spotify track: ${track.searchQuery}`);
+      const results = await youtube.search(track.searchQuery, track.requestedBy, 1);
+      if (results.length === 0) throw new Error(`No YouTube match for: ${track.searchQuery}`);
+      return {
+        ...track,
+        url: results[0].url,
+        searchQuery: undefined,
+      };
+    }
+    return track;
   }
 
   async playNext(): Promise<void> {

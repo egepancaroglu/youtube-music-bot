@@ -6,4 +6,5 @@ export interface Track {
   thumbnail: string;
   requestedBy: string;
   provider: 'youtube' | 'spotify';
+  searchQuery?: string;
 }

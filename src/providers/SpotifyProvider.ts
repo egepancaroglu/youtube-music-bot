@@ -4,7 +4,6 @@ import { config } from '../config.js';
 import { detectInputType, extractSpotifyId } from '../utils/url.js';
 import { ProviderError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import { YouTubeProvider } from './YouTubeProvider.js';
 
 interface SpotifyTrackData {
   name: string;
@@ -28,7 +27,6 @@ export class SpotifyProvider implements MusicProvider {
   readonly name = 'spotify';
   private accessToken = '';
   private tokenExpiry = 0;
-  private readonly youtube = new YouTubeProvider();
 
   canHandle(input: string): boolean {
     const type = detectInputType(input);
@@ -55,8 +53,8 @@ export class SpotifyProvider implements MusicProvider {
     throw new ProviderError('Spotify', 'Unsupported Spotify URL type.');
   }
 
-  async search(query: string, requestedBy: string, limit = 5): Promise<Track[]> {
-    return this.youtube.search(query, requestedBy, limit);
+  async search(_query: string, _requestedBy: string, _limit = 5): Promise<Track[]> {
+    return [];
   }
 
   private async resolveTrack(id: string, requestedBy: string): Promise<Track[]> {
@@ -98,41 +96,23 @@ export class SpotifyProvider implements MusicProvider {
     return this.spotifyTracksToPlayable(allTracks, requestedBy);
   }
 
-  private async spotifyTracksToPlayable(
+  private spotifyTracksToPlayable(
     tracks: SpotifyTrackData[],
     requestedBy: string,
-  ): Promise<Track[]> {
-    const CONCURRENCY = 5;
-    const results: Track[] = [];
-
-    for (let i = 0; i < tracks.length; i += CONCURRENCY) {
-      const batch = tracks.slice(i, i + CONCURRENCY);
-      const settled = await Promise.allSettled(
-        batch.map(async (track) => {
-          const artist = track.artists.map((a) => a.name).join(', ');
-          const searchQuery = `${artist} - ${track.name}`;
-          const found = await this.youtube.search(searchQuery, requestedBy, 1);
-          if (found.length === 0) return null;
-          return {
-            ...found[0],
-            title: track.name,
-            artist,
-            thumbnail: track.album?.images?.[0]?.url ?? found[0].thumbnail,
-            provider: 'spotify' as const,
-          };
-        }),
-      );
-
-      for (const result of settled) {
-        if (result.status === 'fulfilled' && result.value) {
-          results.push(result.value);
-        } else if (result.status === 'rejected') {
-          logger.warn(`Spotify track search failed: ${result.reason}`);
-        }
-      }
-    }
-
-    return results;
+  ): Track[] {
+    return tracks.map((track) => {
+      const artist = track.artists.map((a) => a.name).join(', ');
+      return {
+        title: track.name,
+        artist,
+        url: '',
+        duration: Math.floor(track.duration_ms / 1000),
+        thumbnail: track.album?.images?.[0]?.url ?? '',
+        requestedBy,
+        provider: 'spotify' as const,
+        searchQuery: `${artist} - ${track.name}`,
+      };
+    });
   }
 
   private async ensureToken(): Promise<void> {
