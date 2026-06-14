@@ -1,7 +1,7 @@
 FROM node:22-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 ffmpeg && \
+    apt-get install -y --no-install-recommends python3 ffmpeg ca-certificates && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
